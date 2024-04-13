@@ -61,7 +61,8 @@ func runGame(lobby *engine.Lobby) {
 	}
 
 	for i, conn := range lobby.Conns {
-		_, err := conn.Write(engine.FormatMessage(&Message{fmt.Sprintf("You are player %d\n", i)}))
+		msg := &Message{fmt.Sprintf("You are player %d", i)}
+		_, err := engine.SendUnicastMessage(&conn, engine.FormatMessage[*Message](msg))
 		if err != nil {
 			fmt.Println("Error sending message to player", err)
 		}
