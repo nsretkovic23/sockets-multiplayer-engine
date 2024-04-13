@@ -12,6 +12,11 @@ type Lobby struct {
 	Conns []net.Conn
 }
 
+/*
+	TODO: Add timer for making a lobby
+	TODO: Add timer for matchmaking
+*/
+
 // Matchmakes players, creates and returns the lobby
 // You can provide a message to be sent to all players upon connecting, if you don't want to send a message, pass nil
 func MakeLobby(listener net.Listener, maxConn int, roomId int, message []byte) (*Lobby, error) {
@@ -29,7 +34,7 @@ func MakeLobby(listener net.Listener, maxConn int, roomId int, message []byte) (
 }
 
 // Accepts maxConn number of connections and returns them in a slice
-// If message is not nil, it sends it to all connections upon accepting the connection
+// If message is not nil, it sends message to all connections upon accepting the connection
 func MatchMake(listener net.Listener, maxConn int, roomId int, message []byte) (*[]net.Conn, error) {
 	conns := &[]net.Conn{}
 
@@ -43,17 +48,41 @@ func MatchMake(listener net.Listener, maxConn int, roomId int, message []byte) (
 		*conns = append(*conns, conn)
 
 		if message != nil {
-			_, err = conn.Write([]byte(message))
-			if err != nil {
-				fmt.Println("Error sending message to connected player:", err)
-				continue
-			}
+			SendUnicastMessage(&conn, message)
 		}
 
 		helpers.PrintGreen(fmt.Sprintf("[%d/%d] Player in room %d connected: %s", len(*conns), maxConn, roomId, conn.RemoteAddr().String()))
 	}
 
 	return conns, nil
+}
+
+func SendUnicastMessage(conn *net.Conn, message []byte) (int, error) {
+	if message == nil {
+		return 0, fmt.Errorf("provided message is nil")
+	}
+
+	nBytes, err := (*conn).Write(message)
+	if err != nil {
+		return 0, fmt.Errorf("error sending message to connection: %v", err)
+	}
+
+	return nBytes, nil
+}
+
+func SendMulticastMessage(conns *[]net.Conn, message []byte) error {
+	if message == nil {
+		return fmt.Errorf("provided message is nil")
+	}
+
+	for _, conn := range *conns {
+		_, err := conn.Write(message)
+		if err != nil {
+			return fmt.Errorf("error sending message to connection: %v", err)
+		}
+	}
+
+	return nil
 }
 
 // Formats the message of any type into a byte slice
