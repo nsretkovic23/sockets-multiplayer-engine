@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"socket_server/helpers"
+	"sockets-multiplayer/helpers"
 )
 
 type Lobby struct {

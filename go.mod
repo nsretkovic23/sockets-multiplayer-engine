@@ -1,4 +1,4 @@
-module socket_server
+module sockets-multiplayer
 
 go 1.22.2
 
