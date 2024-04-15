@@ -6,6 +6,7 @@ import (
 	"net"
 	"sockets-multiplayer/engine"
 	"sockets-multiplayer/helpers"
+	"time"
 )
 
 // TODO: These should be in a config file, environment variables or command line arguments
@@ -15,6 +16,7 @@ const (
 	MAX_LOBBIES = 1
 	PORT        = 8080
 	SECRET_WORD = "MY WORD"
+	MIN_CONN    = 2
 )
 
 type ServerMessage struct {
@@ -84,6 +86,7 @@ func runGame(lobby *engine.Lobby) {
 
 	state := &GameState{0, "", []string{}}
 
+	// WELCOME MESSAGE
 	for i, conn := range lobby.Conns {
 		msg := &ServerMessage{
 			"tag_assignment",
@@ -98,6 +101,7 @@ func runGame(lobby *engine.Lobby) {
 		}
 	}
 
+	// GAME LOOP
 	for {
 		msg := engine.FormatMessage(
 			&ServerMessage{"turn", fmt.Sprintf("Player %d's turn", state.Turn),
@@ -108,12 +112,27 @@ func runGame(lobby *engine.Lobby) {
 		engine.SendMulticastMessage(&lobby.Conns, msg)
 
 		msgRaw := make([]byte, 2048)
+		lobby.Conns[state.Turn].SetReadDeadline(time.Now().Add(15 * time.Second))
 		n, err := lobby.Conns[state.Turn].Read(msgRaw)
 		if err != nil {
-			// TODO: TEST THIS
-			helpers.PrintRed("Client disconnected: " + err.Error())
+
+			if engine.IsTimeoutError(err) {
+				helpers.PrintRed("Client input timeout, SEND MESSAGE TO PLAYERS and continue")
+			} else {
+				// TODO: See if you can handle the error better here, this else is pretty general and maybe doesn't mean that the player disconnected
+
+				helpers.PrintRed("Player " + /*fmt.Sprintf("%d", state.Turn)*/ lobby.Conns[state.Turn].RemoteAddr().String() + " disconnected")
+				lobby.Conns = append(lobby.Conns[:state.Turn], lobby.Conns[state.Turn+1:]...)
+
+				if len(lobby.Conns) < MIN_CONN {
+					helpers.PrintRed("Not enough players in the lobby, game over!")
+					helpers.PrintRed("If there is a player in the lobby, message him that he won!")
+					break
+				}
+
+			}
+
 			state.Turn = (state.Turn + 1) % len(lobby.Conns)
-			break
 		}
 
 		var clientMsg ClientMessage

@@ -79,6 +79,7 @@ func handleTurn(msg *ServerMessage, myTag int, serverConn *net.Conn) {
 			break
 		}
 
+		// Send the guess to the server
 		msg := engine.FormatMessage(&ClientMessage{myTag, guess})
 		engine.SendUnicastMessage(serverConn, msg)
 	} else {

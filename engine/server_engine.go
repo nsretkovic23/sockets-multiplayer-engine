@@ -96,3 +96,8 @@ func FormatMessage[V any](message V) []byte {
 
 	return msgJSON
 }
+
+func IsTimeoutError(err error) bool {
+	netErr, ok := err.(net.Error)
+	return ok && netErr.Timeout()
+}
