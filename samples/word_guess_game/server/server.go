@@ -6,6 +6,7 @@ import (
 	"net"
 	"sockets-multiplayer/engine"
 	"sockets-multiplayer/helpers"
+	"sockets-multiplayer/samples/word_guess_game/server/word"
 	"time"
 )
 
@@ -17,6 +18,7 @@ const (
 	PORT        = 8080
 	SECRET_WORD = "MY WORD"
 	MIN_CONN    = 2
+	TIMEOUT     = 15
 )
 
 type ServerMessage struct {
@@ -25,11 +27,21 @@ type ServerMessage struct {
 	Tag             int
 	Turn            int
 	PreviousGuesses []string
+	GuessState      string
 }
 
 type ClientMessage struct {
 	Sender int
 	Guess  string
+}
+
+type GameState struct {
+	Turn            int
+	PreviousGuesses []string
+	GuessedLetters  map[string]bool
+	Word            string
+	IsWordGuessed   bool
+	Message         string
 }
 
 func main() {
@@ -54,6 +66,7 @@ func main() {
 				-1,
 				-1,
 				[]string{},
+				"",
 			}))
 		if err != nil {
 			fmt.Println("Error while trying to make a lobby", err)
@@ -71,12 +84,6 @@ func main() {
 	}
 }
 
-type GameState struct {
-	Turn            int
-	GuessState      string
-	PreviousGuesses []string
-}
-
 func runGame(lobby *engine.Lobby) {
 	fmt.Println("Running game")
 	if lobby.Conns == nil || len(lobby.Conns) <= 1 {
@@ -84,8 +91,17 @@ func runGame(lobby *engine.Lobby) {
 		return
 	}
 
-	state := &GameState{0, "", []string{}}
+	// TODO: Refactor
+	state := &GameState{
+		0,
+		[]string{},
+		word.InitializeLetterMap(),
+		"NIKOLA SRETKOVIC",
+		false,
+		"",
+	}
 
+	// TODO: Refactor
 	// WELCOME MESSAGE
 	for i, conn := range lobby.Conns {
 		msg := &ServerMessage{
@@ -94,6 +110,7 @@ func runGame(lobby *engine.Lobby) {
 			i,
 			0,
 			[]string{},
+			word.FormatSentenceGuessState(state.Word, state.GuessedLetters),
 		}
 		_, err := engine.SendUnicastMessage(&conn, engine.FormatMessage[*ServerMessage](msg))
 		if err != nil {
@@ -101,25 +118,22 @@ func runGame(lobby *engine.Lobby) {
 		}
 	}
 
+	// TODO: Refactor
 	// GAME LOOP
 	for {
-		msg := engine.FormatMessage(
-			&ServerMessage{"turn", fmt.Sprintf("Player %d's turn", state.Turn),
-				-1,
-				state.Turn,
-				state.PreviousGuesses,
-			})
+		// Send message to all players about the next turn
+		msg := state.getNextTurnMessage()
 		engine.SendMulticastMessage(&lobby.Conns, msg)
 
 		msgRaw := make([]byte, 2048)
-		lobby.Conns[state.Turn].SetReadDeadline(time.Now().Add(15 * time.Second))
+		lobby.Conns[state.Turn].SetReadDeadline(time.Now().Add(TIMEOUT * time.Second))
 		n, err := lobby.Conns[state.Turn].Read(msgRaw)
 		if err != nil {
 
 			if engine.IsTimeoutError(err) {
 				helpers.PrintRed("Client input timeout, SEND MESSAGE TO PLAYERS and continue")
 			} else {
-				// TODO: See if you can handle the error better here, this else is pretty general and maybe doesn't mean that the player disconnected
+				// TODO: See if you can handle the error better here, this else is pretty general and maybe doesn't always mean that the player disconnected
 
 				helpers.PrintRed("Player " + /*fmt.Sprintf("%d", state.Turn)*/ lobby.Conns[state.Turn].RemoteAddr().String() + " disconnected")
 				lobby.Conns = append(lobby.Conns[:state.Turn], lobby.Conns[state.Turn+1:]...)
@@ -133,6 +147,7 @@ func runGame(lobby *engine.Lobby) {
 			}
 
 			state.Turn = (state.Turn + 1) % len(lobby.Conns)
+			continue
 		}
 
 		var clientMsg ClientMessage
@@ -148,15 +163,30 @@ func runGame(lobby *engine.Lobby) {
 			continue
 		}
 
-		if clientMsg.Guess == SECRET_WORD {
-			msg := engine.FormatMessage(&ServerMessage{"game_over", "Game over!", -1, -1, state.PreviousGuesses})
+		word.ProcessInput(state.Word, clientMsg.Guess, state.GuessedLetters, &state.IsWordGuessed, &state.Message)
+
+		if state.IsWordGuessed {
+			helpers.PrintInfo("Lobby " + fmt.Sprint(lobby.Id) + "::: Player " + fmt.Sprintf("%d", state.Turn) + " guessed the word/sentence correctly, game over!")
+			// Since turn is not yet incremented, the player who guessed the word is the current player, so we can send state.Turn
+			msg := engine.FormatMessage(&ServerMessage{"game_over", state.Message, -1, state.Turn, state.PreviousGuesses, state.Word})
 			engine.SendMulticastMessage(&lobby.Conns, msg)
 			break
 		}
 
 		state.PreviousGuesses = append(state.PreviousGuesses, clientMsg.Guess)
-		helpers.PrintInfo("Player " + fmt.Sprintf("%d", state.Turn) + " guessed: " + clientMsg.Guess)
+		helpers.PrintInfo("Lobby " + fmt.Sprint(lobby.Id) + "::: Player " + fmt.Sprintf("%d", state.Turn) + " guessed: " + clientMsg.Guess)
 		state.Turn = (state.Turn + 1) % len(lobby.Conns)
 	}
 
+}
+
+func (state *GameState) getNextTurnMessage() []byte {
+	return engine.FormatMessage(&ServerMessage{
+		"turn",
+		fmt.Sprintf("Player %d's turn", state.Turn),
+		-1,
+		state.Turn,
+		state.PreviousGuesses,
+		word.FormatSentenceGuessState(state.Word, state.GuessedLetters),
+	})
 }
