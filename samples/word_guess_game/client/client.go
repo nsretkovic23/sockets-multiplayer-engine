@@ -21,6 +21,7 @@ type ServerMessage struct {
 	Tag             int
 	Turn            int
 	PreviousGuesses []string
+	GuessState      string
 }
 
 type ClientMessage struct {
@@ -61,15 +62,26 @@ func main() {
 		} else if lastMessage.Type == "turn" {
 			handleTurn(&lastMessage, myTag, &conn)
 		} else if lastMessage.Type == "game_over" {
+			handleGameOver(&lastMessage, myTag)
 			break
 		}
 	}
 
 }
 
+func handleGameOver(msg *ServerMessage, myTag int) {
+
+	if msg.Turn == myTag {
+		helpers.PrintGreen("Congratulations! You correctly guessed the word/sentence: !" + msg.GuessState)
+	} else {
+		helpers.PrintRed("Game over! Player " + fmt.Sprint(msg.Turn) + " guessed the sentence/word." + "The word/sentence was: " + msg.GuessState)
+	}
+}
+
 func handleTurn(msg *ServerMessage, myTag int, serverConn *net.Conn) {
 	if msg.Turn == myTag {
 		helpers.PrintGreen(fmt.Sprintf("It's my turn! Previous guesses: [ %v ]", strings.Join(msg.PreviousGuesses, ", ")))
+		helpers.PrintYellow(msg.GuessState)
 
 		scanner := bufio.NewScanner(os.Stdin)
 		guess := ""
@@ -84,6 +96,7 @@ func handleTurn(msg *ServerMessage, myTag int, serverConn *net.Conn) {
 		engine.SendUnicastMessage(serverConn, msg)
 	} else {
 		helpers.PrintInfo(fmt.Sprintf("It's %d's turn... Guesses: [ %v ]", msg.Turn, strings.Join(msg.PreviousGuesses, ", ")))
+		helpers.PrintYellow(msg.GuessState)
 	}
 }
 
