@@ -9,10 +9,12 @@ import (
 	"sockets-multiplayer/engine"
 	"sockets-multiplayer/helpers"
 	"strings"
+	"time"
 )
 
 const (
-	PORT = 8080
+	TIMEOUT = 15
+	PORT    = 8080
 )
 
 type ServerMessage struct {
@@ -38,7 +40,7 @@ func main() {
 	defer conn.Close()
 	helpers.PrintInfo("Connected to server")
 
-	var lastMessage ServerMessage
+	var message ServerMessage
 	var myTag int
 
 	for {
@@ -49,20 +51,20 @@ func main() {
 			return
 		}
 
-		err = json.Unmarshal(msgRaw[:n], &lastMessage)
+		err = json.Unmarshal(msgRaw[:n], &message)
 		if err != nil {
 			helpers.PrintRed("Error unmarshalling message: " + err.Error())
 			continue
 		}
 
-		if lastMessage.Type == "welcome" {
-			handleWelcomeMessage(&lastMessage)
-		} else if lastMessage.Type == "tag_assignment" {
-			handleTagAssignmentMessage(&lastMessage, &myTag)
-		} else if lastMessage.Type == "turn" {
-			handleTurn(&lastMessage, myTag, &conn)
-		} else if lastMessage.Type == "game_over" {
-			handleGameOver(&lastMessage, myTag)
+		if message.Type == "welcome" {
+			handleWelcomeMessage(&message)
+		} else if message.Type == "tag_assignment" {
+			handleTagAssignmentMessage(&message, &myTag)
+		} else if message.Type == "turn" {
+			handleTurn(&message, myTag, &conn)
+		} else if message.Type == "game_over" {
+			handleGameOver(&message, myTag)
 			break
 		}
 	}
@@ -81,14 +83,24 @@ func handleGameOver(msg *ServerMessage, myTag int) {
 func handleTurn(msg *ServerMessage, myTag int, serverConn *net.Conn) {
 	if msg.Turn == myTag {
 		helpers.PrintGreen(fmt.Sprintf("It's my turn! Previous guesses: [ %v ]", strings.Join(msg.PreviousGuesses, ", ")))
-		helpers.PrintYellow(msg.GuessState)
+		helpers.PrintYellow(msg.GuessState + "\n")
 
-		scanner := bufio.NewScanner(os.Stdin)
-		guess := ""
+		guessChan := make(chan string)
+		go func() {
+			scanner := bufio.NewScanner(os.Stdin)
+			if scanner.Scan() {
+				guessChan <- scanner.Text()
+			}
+		}()
 
-		for scanner.Scan() {
-			guess = scanner.Text()
-			break
+		var guess string
+		select {
+		case guess = <-guessChan:
+			// Received a guess from the user
+		case <-time.After(TIMEOUT * time.Second):
+			// Timeout
+			helpers.PrintRed("Timeout. No guess was entered.")
+			return
 		}
 
 		// Send the guess to the server
