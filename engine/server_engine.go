@@ -5,8 +5,15 @@ import (
 	"fmt"
 	"net"
 	"sockets-multiplayer/helpers"
+	"time"
 )
 
+const (
+	HEARTBEAT_TIMEOUT = 1
+)
+
+// Conns is a slice (array) for now, but it can be changed to a map if needed
+// I kept it as a slice because I don't know if conn's address will always be unique
 type Lobby struct {
 	Id    int
 	Conns []net.Conn
@@ -17,12 +24,12 @@ type Lobby struct {
 	TODO: Add timer for matchmaking
 */
 
-// Matchmakes players, creates and returns the lobby
+// Accepts connections, creates and returns the lobby
 // You can provide a message to be sent to all players upon connecting, if you don't want to send a message, pass nil
-func MakeLobby(listener net.Listener, maxConn int, roomId int, message []byte) (*Lobby, error) {
-	lobby := &Lobby{roomId, []net.Conn{}}
+func MakeLobby(listener net.Listener, maxConn int, lobbyId int, message []byte) (*Lobby, error) {
+	lobby := &Lobby{lobbyId, []net.Conn{}}
 	// Matchmake players
-	conns, err := MatchMake(listener, maxConn, lobby.Id, message)
+	conns, err := AcceptClients(listener, maxConn, lobby.Id, message)
 
 	if err != nil {
 		fmt.Println("Error while trying to matchmake players", err)
@@ -35,10 +42,12 @@ func MakeLobby(listener net.Listener, maxConn int, roomId int, message []byte) (
 
 // Accepts maxConn number of connections and returns them in a slice
 // If message is not nil, it sends message to all connections upon accepting the connection
-func MatchMake(listener net.Listener, maxConn int, roomId int, message []byte) (*[]net.Conn, error) {
+func AcceptClients(listener net.Listener, maxConn int, lobbyId int, message []byte) (*[]net.Conn, error) {
 	conns := &[]net.Conn{}
+	stopLobbyHeartbeat := false
 
 	for len(*conns) < maxConn {
+
 		conn, err := listener.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection:", err)
@@ -51,10 +60,61 @@ func MatchMake(listener net.Listener, maxConn int, roomId int, message []byte) (
 			SendUnicastMessage(&conn, message)
 		}
 
-		helpers.PrintGreen(fmt.Sprintf("[%d/%d] Player in room %d connected: %s", len(*conns), maxConn, roomId, conn.RemoteAddr().String()))
+		helpers.PrintGreen(fmt.Sprintf("[%d/%d] Player in lobby %d connected: %s", len(*conns), maxConn, lobbyId, conn.RemoteAddr().String()))
+
+		// Handling possible client disconnect during the matchmaking/lobby creating process, while lobby is not fully complete
+		disconnected := make(chan *net.Conn)
+		// Start the heartbeat for the connection
+		go LobbyHeartbeat(&conn, disconnected, &stopLobbyHeartbeat)
+
+		go func() {
+			dcClient := <-disconnected
+			// Condition to exit the goroutine
+			// nil is sent to the channel when lobby is full, this ultimately means that the client didn't disconnect during the matchmaking/lobby making process
+			if dcClient == nil {
+				return
+			}
+
+			err := RemoveConn(dcClient, conns)
+			if err == nil {
+				helpers.PrintRed(fmt.Sprintf("Client disconnected and removed from the channel: %v", (*dcClient).RemoteAddr().String()))
+			}
+		}()
+
 	}
 
+	// Since this variable is passed by reference to the goroutines that heartbeat the connections, we can stop the every heartbeat goroutine by setting it to true here
+	stopLobbyHeartbeat = true
+	time.Sleep((HEARTBEAT_TIMEOUT + 1) * time.Second)
 	return conns, nil
+}
+
+// Checks every HEARTBEAT_TIMEOUT seconds (number should be as low as possible (preferrably 1)) if the connection is still alive while clients are currently in a lobby that is not yet full
+func LobbyHeartbeat(conn *net.Conn, disconnected chan *net.Conn, stop *bool) {
+	helpers.PrintInfo(fmt.Sprintf("START:: Starting Lobby heartbeat for the connection %v", (*conn).RemoteAddr().String()))
+	// Make a minimal buffer that will just serve for the read call
+	buff := make([]byte, 1)
+
+	// Set timeout to one second so that the Read call acts as a heartbeat
+	for !*stop {
+		fmt.Println("heartbeat")
+		// Timeout needs to be set every iteration
+		(*conn).SetReadDeadline(time.Now().Add(HEARTBEAT_TIMEOUT * time.Second))
+		// Try to read from the connection
+		_, err := (*conn).Read(buff)
+		// Error can be a timeout, or a closed connection
+		if err != nil {
+			// Check if the connection is closed by the client
+			if netErr, ok := err.(net.Error); ok && !netErr.Timeout() {
+				disconnected <- conn
+				break
+			}
+			// If deadline/timeout exceeded, continue checking the stop condition
+		}
+	}
+
+	disconnected <- nil
+	helpers.PrintRed(fmt.Sprintf("STOP:: Stopping lobby heartbeat for: %v", (*conn).RemoteAddr()))
 }
 
 func SendUnicastMessage(conn *net.Conn, message []byte) (int, error) {
@@ -100,4 +160,14 @@ func FormatMessage[V any](message V) []byte {
 func IsTimeoutError(err error) bool {
 	netErr, ok := err.(net.Error)
 	return ok && netErr.Timeout()
+}
+
+func RemoveConn(conn *net.Conn, arr *[]net.Conn) error {
+	for i, c := range *arr {
+		if *conn == c {
+			*arr = append((*arr)[:i], (*arr)[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("connection not found in the lobby")
 }
