@@ -60,12 +60,12 @@ func AcceptClients(listener net.Listener, maxConn int, lobbyId int, message []by
 			SendUnicastMessage(&conn, message)
 		}
 
-		helpers.PrintGreen(fmt.Sprintf("[%d/%d] Player in lobby %d connected: %s", len(*conns), maxConn, lobbyId, conn.RemoteAddr().String()))
+		helpers.PrintGreen(fmt.Sprintf("Lobby %d [%d/%d] Player connected: %s", lobbyId, len(*conns), maxConn, conn.RemoteAddr().String()))
 
 		// Handling possible client disconnect during the matchmaking/lobby creating process, while lobby is not fully complete
 		disconnected := make(chan *net.Conn)
 		// Start the heartbeat for the connection
-		go LobbyHeartbeat(&conn, disconnected, &stopLobbyHeartbeat)
+		go LobbyHeartbeat(lobbyId, &conn, disconnected, &stopLobbyHeartbeat)
 
 		go func() {
 			dcClient := <-disconnected
@@ -77,7 +77,7 @@ func AcceptClients(listener net.Listener, maxConn int, lobbyId int, message []by
 
 			err := RemoveConn(dcClient, conns)
 			if err == nil {
-				helpers.PrintRed(fmt.Sprintf("Client disconnected and removed from the channel: %v", (*dcClient).RemoteAddr().String()))
+				helpers.PrintRed(fmt.Sprintf("Lobby %d: Client disconnected and removed from the channel: %v", lobbyId, (*dcClient).RemoteAddr().String()))
 			}
 		}()
 
@@ -90,14 +90,13 @@ func AcceptClients(listener net.Listener, maxConn int, lobbyId int, message []by
 }
 
 // Checks every HEARTBEAT_TIMEOUT seconds (number should be as low as possible (preferrably 1)) if the connection is still alive while clients are currently in a lobby that is not yet full
-func LobbyHeartbeat(conn *net.Conn, disconnected chan *net.Conn, stop *bool) {
-	helpers.PrintInfo(fmt.Sprintf("START:: Starting Lobby heartbeat for the connection %v", (*conn).RemoteAddr().String()))
+func LobbyHeartbeat(lobbyId int, conn *net.Conn, disconnected chan *net.Conn, stop *bool) {
+	helpers.PrintInfo(fmt.Sprintf("Lobby %d : Starting Lobby heartbeat for the connection %v", lobbyId, (*conn).RemoteAddr().String()))
 	// Make a minimal buffer that will just serve for the read call
 	buff := make([]byte, 1)
 
 	// Set timeout to one second so that the Read call acts as a heartbeat
 	for !*stop {
-		fmt.Println("heartbeat")
 		// Timeout needs to be set every iteration
 		(*conn).SetReadDeadline(time.Now().Add(HEARTBEAT_TIMEOUT * time.Second))
 		// Try to read from the connection
@@ -114,7 +113,7 @@ func LobbyHeartbeat(conn *net.Conn, disconnected chan *net.Conn, stop *bool) {
 	}
 
 	disconnected <- nil
-	helpers.PrintRed(fmt.Sprintf("STOP:: Stopping lobby heartbeat for: %v", (*conn).RemoteAddr()))
+	helpers.PrintYellow(fmt.Sprintf("Lobby %d : Stopping lobby heartbeat for: %v", lobbyId, (*conn).RemoteAddr()))
 }
 
 func SendUnicastMessage(conn *net.Conn, message []byte) (int, error) {
