@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -24,6 +25,8 @@ type ServerMessage struct {
 	Turn            int
 	PreviousGuesses []string
 	GuessState      string
+	WinnerTag       int
+	WonByDisconnect bool
 }
 
 type ClientMessage struct {
@@ -72,22 +75,26 @@ func main() {
 }
 
 func handleGameOver(msg *ServerMessage, myTag int) {
-
-	if msg.Turn == myTag {
-		helpers.PrintGreen("Congratulations! You correctly guessed the word/sentence: !" + msg.GuessState)
+	if msg.WinnerTag == myTag || msg.WonByDisconnect {
+		helpers.PrintGreen(fmt.Sprintf("Game over: %s The word/sentence was: %s", msg.Text, msg.GuessState))
 	} else {
-		helpers.PrintRed("Game over! Player " + fmt.Sprint(msg.Turn) + " guessed the sentence/word." + "The word/sentence was: " + msg.GuessState)
+		helpers.PrintRed(fmt.Sprintf("Game over. Player %d guessed the word/sentence correctly. The word/sentence was: %s", msg.WinnerTag, msg.GuessState))
 	}
 }
 
 func handleTurn(msg *ServerMessage, myTag int, serverConn *net.Conn) {
 	if msg.Turn == myTag {
-		helpers.PrintGreen(fmt.Sprintf("It's my turn! Previous guesses: [ %v ]", strings.Join(msg.PreviousGuesses, ", ")))
-		helpers.PrintYellow(msg.GuessState + "\n")
+		ctx, cancel := context.WithTimeout(context.Background(), TIMEOUT*time.Second)
+		defer cancel()
 
-		guessChan := make(chan string)
+		helpers.PrintGreen(fmt.Sprintf("It's my turn! Guesses: [ %v ]", strings.Join(msg.PreviousGuesses, ", ")))
+		helpers.PrintYellow(msg.GuessState)
+
+		guessChan := make(chan string, 1)
+		scanner := bufio.NewScanner(os.Stdin)
+
+		// TODO: LEAKING GOROUTINE PROBLEM
 		go func() {
-			scanner := bufio.NewScanner(os.Stdin)
 			if scanner.Scan() {
 				guessChan <- scanner.Text()
 			}
@@ -97,14 +104,14 @@ func handleTurn(msg *ServerMessage, myTag int, serverConn *net.Conn) {
 		select {
 		case guess = <-guessChan:
 			// Received a guess from the user
-		case <-time.After(TIMEOUT * time.Second):
+		case <-ctx.Done():
 			// Timeout
 			helpers.PrintRed("Timeout. No guess was entered.")
 			return
 		}
 
-		// Send the guess to the server
 		msg := engine.FormatMessage(&ClientMessage{myTag, guess})
+		// Send the guess to the server
 		engine.SendUnicastMessage(serverConn, msg)
 	} else {
 		helpers.PrintInfo(fmt.Sprintf("It's %d's turn... Guesses: [ %v ]", msg.Turn, strings.Join(msg.PreviousGuesses, ", ")))
